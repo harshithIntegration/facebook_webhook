@@ -22,14 +22,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 @RestController
 @RequestMapping("/webhook")
 public class WebhookController {
-	
-	   @Value("${app.token}")
-	    private String token;
 
+    @Value("${app.token}")
+    private String token;
 
     private static final String VERIFY_TOKEN = "your_verify_token";
     private final ObjectMapper objectMapper = new ObjectMapper();
 
+    // Verify the webhook subscription
     @GetMapping
     public String verifyWebhook(@RequestParam("hub.mode") String mode, 
                                 @RequestParam("hub.verify_token") String token, 
@@ -41,8 +41,9 @@ public class WebhookController {
         }
     }
 
+    // Handle incoming webhook payload
     @PostMapping
-    public void handleWebhook(@RequestBody String payload) {
+    public ResponseEntity<String> handleWebhook(@RequestBody String payload) {
         try {
             JsonNode jsonNode = objectMapper.readTree(payload);
             if (jsonNode.has("entry")) {
@@ -51,66 +52,45 @@ public class WebhookController {
                     // Process each entry
                     System.out.println("Entry: " + entry);
                     // Further processing based on the event type
+                    processEntry(entry);
                 }
+                return new ResponseEntity<>("Webhook processed", HttpStatus.OK);
             }
         } catch (Exception e) {
             e.printStackTrace();
         }
+        return new ResponseEntity<>("No valid message", HttpStatus.BAD_REQUEST);
     }
-    
-    @PostMapping("/webhook")
-    public ResponseEntity<String> handleWebhook(@RequestBody Map<String, Object> bodyParam) {
-        System.out.println("Received body: " + bodyParam);
 
-        // Check if the incoming payload has the "object" key
-        if (bodyParam.containsKey("object")) {
+    // Method to process each entry
+    private void processEntry(JsonNode entry) {
+        // Get the "changes" list from the first entry
+        List<JsonNode> changes = entry.findValues("changes");
+        for (JsonNode change : changes) {
+            JsonNode value = change.get("value");
 
-            // Get the "entry" list from the payload
-            List<Map<String, Object>> entries = (List<Map<String, Object>>) bodyParam.get("entry");
+            if (value != null && value.has("messages")) {
+                // 'messages' is a list, get the first message
+                List<JsonNode> messages = value.findValues("messages");
+                if (messages != null && !messages.isEmpty()) {
+                    // Get the first message in the messages list
+                    JsonNode message = messages.get(0);
 
-            if (entries != null && !entries.isEmpty()) {
-                // Access the first entry in the "entry" list
-                Map<String, Object> entry = entries.get(0);
+                    // Get the required fields: phone_number_id, from, and message body
+                    String phoneNumberId = value.get("metadata").get("phone_number_id").asText();
+                    String from = message.get("from").asText();
+                    String msgBody = message.get("text").get("body").asText();
 
-                // Get the "changes" list from the first entry
-                List<Map<String, Object>> changes = (List<Map<String, Object>>) entry.get("changes");
+                    // Log the values
+                    System.out.println("Phone number: " + phoneNumberId);
+                    System.out.println("From: " + from);
+                    System.out.println("Message body: " + msgBody);
 
-                if (changes != null && !changes.isEmpty()) {
-                    // Access the first change in the "changes" list
-                    Map<String, Object> change = changes.get(0);
-
-                    // Get the "value" map from the first change
-                    Map<String, Object> value = (Map<String, Object>) change.get("value");
-
-                    if (value != null && value.containsKey("messages")) {
-                        // 'messages' is a list, get the first message
-                        List<Map<String, Object>> messages = (List<Map<String, Object>>) value.get("messages");
-
-                        if (messages != null && !messages.isEmpty()) {
-                            // Get the first message in the messages list
-                            Map<String, Object> message = messages.get(0);
-
-                            // Get the required fields: phone_number_id, from, and message body
-                            Map<String, Object> metadata = (Map<String, Object>) value.get("metadata");
-                            String phoneNumberId = (String) metadata.get("phone_number_id");
-                            String from = (String) message.get("from");
-                            Map<String, Object> text = (Map<String, Object>) message.get("text");
-                            String msgBody = (String) text.get("body");
-
-                            // Log the values
-                            System.out.println("Phone number: " + phoneNumberId);
-                            System.out.println("From: " + from);
-                            System.out.println("Message body: " + msgBody);
-
-                            // Send a message response back via WhatsApp API
-                            sendMessageToWhatsapp(phoneNumberId, from, msgBody);
-                            return new ResponseEntity<>("Message processed", HttpStatus.OK);
-                        }
-                    }
+                    // Send a message response back via WhatsApp API
+                    sendMessageToWhatsapp(phoneNumberId, from, msgBody);
                 }
             }
         }
-        return new ResponseEntity<>("No valid message", HttpStatus.NOT_FOUND);
     }
 
     // Function to send message back via WhatsApp API
@@ -123,7 +103,7 @@ public class WebhookController {
         Map<String, Object> requestBody = Map.of(
             "messaging_product", "whatsapp",
             "to", from,
-            "text", Map.of("body", "At Quantum Paradigm, we specialize in cutting-edge backend development solutions, leveraging advanced technologies like Spring Boot and Java to deliver scalable, efficient, and high-performance systems tailored to meet the evolving needs of businesses across industries.: " + messageBody)
+            "text", Map.of("body", "At Quantum Paradigm, we specialize in cutting-edge backend development solutions, leveraging advanced technologies like Spring Boot and Java to deliver scalable, efficient, and high-performance systems tailored to meet the evolving needs of businesses across industries: " + messageBody)
         );
 
         // Set headers for the HTTP POST request
@@ -136,5 +116,4 @@ public class WebhookController {
         // Execute HTTP POST request to WhatsApp API
         restTemplate.postForObject(url, entity, String.class);
     }
-
 }
